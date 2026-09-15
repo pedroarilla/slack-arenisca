@@ -22,49 +22,26 @@ jobs:
             TITLE=$(echo $RESPONSE | jq -r '.data[0].title // .data[0].generated_title // "Nuevo contenido"')
             IMAGE_URL=$(echo $RESPONSE | jq -r '.data[0].image.display.url // empty')
             BLOCK_ID=$(echo $RESPONSE | jq -r '.data[0].id // empty')
-            SOURCE_URL=$(echo $RESPONSE | jq -r '.data[0].source.url // "https://www.are.na/block/" + (.data[0].id|tostring)')
+            SOURCE_URL=$(echo $RESPONSE | jq -r '.data[0].source.url // ("https://www.are.na/block/" + (.data[0].id|tostring))')
 
             if [ -n "$BLOCK_ID" ] && [ "$BLOCK_ID" != "null" ]; then
-              # Si hay imagen, generamos bloque con previsualización visual
+              # Generar JSON de forma segura usando jq
               if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
-                PAYLOAD=$(cat <<EOF
-                {
-                  "blocks": [
-                    {
-                      "type": "section",
-                      "text": {
-                        "type": "mrkdwn",
-                        "text": "*Nuevo en [${CHANNEL}]:* <${SOURCE_URL}|${TITLE}>"
-                      }
-                    },
-                    {
-                      "type": "image",
-                      "image_url": "${IMAGE_URL}",
-                      "alt_text": "${TITLE}"
-                    }
-                  ]
-                }
-EOF
-                )
+                PAYLOAD=$(jq -n \
+                  --arg title "$TITLE" \
+                  --arg url "$SOURCE_URL" \
+                  --arg img "$IMAGE_URL" \
+                  --arg ch "$CHANNEL" \
+                  '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}, {type: "image", image_url: $img, alt_text: $title}]}')
               else
-                # Si es un texto o enlace sin imagen previa
-                PAYLOAD=$(cat <<EOF
-                {
-                  "blocks": [
-                    {
-                      "type": "section",
-                      "text": {
-                        "type": "mrkdwn",
-                        "text": "*Nuevo en [${CHANNEL}]:* <${SOURCE_URL}|${TITLE}>"
-                      }
-                    }
-                  ]
-                }
-EOF
-                )
+                PAYLOAD=$(jq -n \
+                  --arg title "$TITLE" \
+                  --arg url "$SOURCE_URL" \
+                  --arg ch "$CHANNEL" \
+                  '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}]}')
               fi
 
               # Enviar a Slack
-              curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" $SLACK_WEBHOOK
+              curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK"
             fi
           done
