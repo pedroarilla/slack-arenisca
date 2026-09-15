@@ -9,42 +9,78 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Selected Channels & Post to Slack
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. Recuperar el historial de bloques enviados desde la memoria caché de GitHub
+      - name: Restore Processed Blocks History
+        uses: actions/cache/restore@v4
+        id: cache-history
+        with:
+          path: processed_ids.txt
+          key: arena-processed-blocks-history
+          restore-keys: |
+            arena-processed-blocks-
+
+      # 2. Consultar Are.na y publicar únicamente los bloques nuevos en Slack
+      - name: Fetch Selected Channels & Post New Items
         env:
           ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           CHANNELS: ${{ secrets.ARENA_CHANNELS }}
         run: |
+          # Si el archivo de historial no existe, crearlo vacío
+          touch processed_ids.txt
+
           for CHANNEL in $CHANNELS; do
-            RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL/contents?per=1")
+            # Pedimos los últimos 10 bloques para no perder nada si subes varios juntos
+            RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL/contents?per=10")
+            CHANNEL_NAME=$(echo "$RESPONSE" | jq -r '.channel.title // .data[0].channel.title // "'$CHANNEL'"')
             
-            # Extraer título del canal y datos del bloque
-            CHANNEL_NAME=$(echo $RESPONSE | jq -r '.channel.title // .data[0].channel.title // "'$CHANNEL'"')
-            TITLE=$(echo $RESPONSE | jq -r '.data[0].title // .data[0].generated_title // "Nuevo contenido"')
-            IMAGE_URL=$(echo $RESPONSE | jq -r '.data[0].image.display.url // empty')
-            BLOCK_ID=$(echo $RESPONSE | jq -r '.data[0].id // empty')
-            
-            # Enlace directo al bloque en Are.na
-            ARENA_BLOCK_URL="https://www.are.na/block/$BLOCK_ID"
+            # Recorremos los bloques desde el más antiguo al más reciente
+            echo "$RESPONSE" | jq -c '.data[]?' | tac | while read -r BLOCK; do
+              BLOCK_ID=$(echo "$BLOCK" | jq -r '.id // empty')
+              
+              if [ -n "$BLOCK_ID" ] && [ "$BLOCK_ID" != "null" ]; then
+                # Verificar si el ID ya existe en el archivo
+                if grep -q "^${BLOCK_ID}$" processed_ids.txt; then
+                  echo "El bloque $BLOCK_ID ya fue enviado previamente. Omitiendo..."
+                else
+                  TITLE=$(echo "$BLOCK" | jq -r '.title // .generated_title // "Nuevo contenido"')
+                  IMAGE_URL=$(echo "$BLOCK" | jq -r '.image.display.url // empty')
+                  ARENA_BLOCK_URL="https://www.are.na/block/$BLOCK_ID"
 
-            if [ -n "$BLOCK_ID" ] && [ "$BLOCK_ID" != "null" ]; then
-              # Generar JSON de forma segura
-              if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
-                PAYLOAD=$(jq -n \
-                  --arg title "$TITLE" \
-                  --arg url "$ARENA_BLOCK_URL" \
-                  --arg img "$IMAGE_URL" \
-                  --arg ch "$CHANNEL_NAME" \
-                  '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}, {type: "image", image_url: $img, alt_text: $title}]}')
-              else
-                PAYLOAD=$(jq -n \
-                  --arg title "$TITLE" \
-                  --arg url "$ARENA_BLOCK_URL" \
-                  --arg ch "$CHANNEL_NAME" \
-                  '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}]}')
+                  # Construir payload enriquecido de Slack
+                  if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
+                    PAYLOAD=$(jq -n \
+                      --arg title "$TITLE" \
+                      --arg url "$ARENA_BLOCK_URL" \
+                      --arg img "$IMAGE_URL" \
+                      --arg ch "$CHANNEL_NAME" \
+                      '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}, {type: "image", image_url: $img, alt_text: $title}]}')
+                  else
+                    PAYLOAD=$(jq -n \
+                      --arg title "$TITLE" \
+                      --arg url "$ARENA_BLOCK_URL" \
+                      --arg ch "$CHANNEL_NAME" \
+                      '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}]}')
+                  fi
+
+                  # Enviar a Slack
+                  curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK"
+                  
+                  # Registrar el ID enviado en la lista
+                  echo "$BLOCK_ID" >> processed_ids.txt
+                  sleep 1
+                fi
               fi
-
-              # Enviar a Slack
-              curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK"
-            fi
+            done
           done
+
+      # 3. Guardar el archivo actualizado en caché para la siguiente hora
+      - name: Save Processed Blocks History
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: processed_ids.txt
+          key: arena-processed-blocks-${{ github.run_id }}
