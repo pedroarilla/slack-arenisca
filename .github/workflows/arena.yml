@@ -2,27 +2,69 @@ name: Are.na to Slack Sync
 
 on:
   schedule:
-    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
-  workflow_dispatch: # Para probarlo manualmente
+    - cron: '0 * * * *' # Se ejecuta cada hora
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Are.na Updates & Post to Slack
+      - name: Fetch Selected Channels & Post to Slack
         env:
           ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          CHANNELS: ${{ secrets.ARENA_CHANNELS }}
         run: |
-          # Petición a la API V3 de Are.na para obtener tus últimas conexiones/bloques
-          RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/me/contents?per=1")
-          
-          # Extracción simple del título
-          TITLE=$(echo $RESPONSE | jq -r '.data[0].title // "Nuevo contenido en Are.na"')
-          
-          if [ "$TITLE" != "null" ] && [ -n "$TITLE" ]; then
-            # Envío de notificación a Slack
-            curl -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"**Nuevo en Are.na:** $TITLE\"}" \
-            $SLACK_WEBHOOK
-          fi
+          for CHANNEL in $CHANNELS; do
+            RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL/contents?per=1")
+            
+            # Extraer campos clave
+            TITLE=$(echo $RESPONSE | jq -r '.data[0].title // .data[0].generated_title // "Nuevo contenido"')
+            IMAGE_URL=$(echo $RESPONSE | jq -r '.data[0].image.display.url // empty')
+            BLOCK_ID=$(echo $RESPONSE | jq -r '.data[0].id // empty')
+            SOURCE_URL=$(echo $RESPONSE | jq -r '.data[0].source.url // "https://www.are.na/block/" + (.data[0].id|tostring)')
+
+            if [ -n "$BLOCK_ID" ] && [ "$BLOCK_ID" != "null" ]; then
+              # Si hay imagen, generamos bloque con previsualización visual
+              if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
+                PAYLOAD=$(cat <<EOF
+                {
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "*Nuevo en [${CHANNEL}]:* <${SOURCE_URL}|${TITLE}>"
+                      }
+                    },
+                    {
+                      "type": "image",
+                      "image_url": "${IMAGE_URL}",
+                      "alt_text": "${TITLE}"
+                    }
+                  ]
+                }
+EOF
+                )
+              else
+                # Si es un texto o enlace sin imagen previa
+                PAYLOAD=$(cat <<EOF
+                {
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "*Nuevo en [${CHANNEL}]:* <${SOURCE_URL}|${TITLE}>"
+                      }
+                    }
+                  ]
+                }
+EOF
+                )
+              fi
+
+              # Enviar a Slack
+              curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" $SLACK_WEBHOOK
+            fi
+          done
