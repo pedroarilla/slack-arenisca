@@ -1,0 +1,28 @@
+name: Are.na to Slack Sync
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
+  workflow_dispatch: # Para probarlo manualmente
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Are.na Updates & Post to Slack
+        env:
+          ARENA_TOKEN: ${{ secrets.ARENA_TOKEN }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          # Petición a la API V3 de Are.na para obtener tus últimas conexiones/bloques
+          RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/me/contents?per=1")
+          
+          # Extracción simple del título
+          TITLE=$(echo $RESPONSE | jq -r '.data[0].title // "Nuevo contenido en Are.na"')
+          
+          if [ "$TITLE" != "null" ] && [ -n "$TITLE" ]; then
+            # Envío de notificación a Slack
+            curl -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"**Nuevo en Are.na:** $TITLE\"}" \
+            $SLACK_WEBHOOK
+          fi
