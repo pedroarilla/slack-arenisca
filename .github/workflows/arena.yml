@@ -18,26 +18,29 @@ jobs:
           for CHANNEL in $CHANNELS; do
             RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL/contents?per=1")
             
-            # Extraer campos clave
+            # Extraer título del canal y datos del bloque
+            CHANNEL_NAME=$(echo $RESPONSE | jq -r '.channel.title // .data[0].channel.title // "'$CHANNEL'"')
             TITLE=$(echo $RESPONSE | jq -r '.data[0].title // .data[0].generated_title // "Nuevo contenido"')
             IMAGE_URL=$(echo $RESPONSE | jq -r '.data[0].image.display.url // empty')
             BLOCK_ID=$(echo $RESPONSE | jq -r '.data[0].id // empty')
-            SOURCE_URL=$(echo $RESPONSE | jq -r '.data[0].source.url // ("https://www.are.na/block/" + (.data[0].id|tostring))')
+            
+            # Enlace directo al bloque en Are.na
+            ARENA_BLOCK_URL="https://www.are.na/block/$BLOCK_ID"
 
             if [ -n "$BLOCK_ID" ] && [ "$BLOCK_ID" != "null" ]; then
-              # Generar JSON de forma segura usando jq
+              # Generar JSON de forma segura
               if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
                 PAYLOAD=$(jq -n \
                   --arg title "$TITLE" \
-                  --arg url "$SOURCE_URL" \
+                  --arg url "$ARENA_BLOCK_URL" \
                   --arg img "$IMAGE_URL" \
-                  --arg ch "$CHANNEL" \
+                  --arg ch "$CHANNEL_NAME" \
                   '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}, {type: "image", image_url: $img, alt_text: $title}]}')
               else
                 PAYLOAD=$(jq -n \
                   --arg title "$TITLE" \
-                  --arg url "$SOURCE_URL" \
-                  --arg ch "$CHANNEL" \
+                  --arg url "$ARENA_BLOCK_URL" \
+                  --arg ch "$CHANNEL_NAME" \
                   '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}]}')
               fi
 
