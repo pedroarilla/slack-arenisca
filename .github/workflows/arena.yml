@@ -46,17 +46,24 @@ jobs:
                 else
                   TITLE=$(echo "$BLOCK" | jq -r '.title // .generated_title // "Nuevo contenido"')
                   
-                  # 3. Extracción exhaustiva de la URL de la imagen para la V3 de Are.na
+                  # 3. Extracción completa de imagen cubriendo todos los tipos de bloque en Are.na V3
                   IMAGE_URL=$(echo "$BLOCK" | jq -r '
                     .image.display.url // 
                     .image.large.url // 
                     .image.square.url // 
                     .image.original.url // 
+                    .image_url // 
+                    .src // 
+                    .attachment.image_url // 
                     .attachment.url // 
+                    .embed.image_url // 
                     empty
                   ')
                   
                   ARENA_BLOCK_URL="https://www.are.na/block/$BLOCK_ID"
+
+                  # Comprobación de éxito para saber en la consola si encontró la URL
+                  echo "Bloque ID $BLOCK_ID -> URL de Imagen detectada: '$IMAGE_URL'"
 
                   # 4. Construcción del payload de Slack
                   if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
