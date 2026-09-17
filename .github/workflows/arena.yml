@@ -2,7 +2,7 @@ name: Are.na to Slack Sync
 
 on:
   schedule:
-    - cron: '23 * * * *'
+    - cron: '23 * * * *' # Minuto impar para evitar colas de GitHub
   workflow_dispatch:
 
 jobs:
@@ -30,10 +30,12 @@ jobs:
           touch processed_ids.txt
 
           for CHANNEL in $CHANNELS; do
+            # 1. Obtener la información del canal para extraer el TÍTULO REAL
             CHANNEL_INFO=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL")
             CHANNEL_NAME=$(echo "$CHANNEL_INFO" | jq -r '.title // "'$CHANNEL'"')
 
-            RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL/contents?per=5")
+            # 2. Obtener los últimos 10 bloques del canal
+            RESPONSE=$(curl -s -H "Authorization: Bearer $ARENA_TOKEN" "https://api.are.na/v3/channels/$CHANNEL/contents?per=10")
             
             echo "$RESPONSE" | jq -c '.data[]?' | tac | while read -r BLOCK; do
               BLOCK_ID=$(echo "$BLOCK" | jq -r '.id // empty')
@@ -42,17 +44,13 @@ jobs:
                 if grep -q "^${BLOCK_ID}$" processed_ids.txt; then
                   echo "El bloque $BLOCK_ID ya fue enviado previamente. Omitiendo..."
                 else
-                  # IMPRESIÓN COMPLETA PARA REVISAR V3
-                  echo "=== JSON V3 DEL BLOQUE $BLOCK_ID ==="
-                  echo "$BLOCK"
-                  echo "===================================="
-
                   TITLE=$(echo "$BLOCK" | jq -r '.title // .generated_title // "Nuevo contenido"')
                   
+                  # 3. Ruta exacta de la imagen para la API V3 de Are.na
                   IMAGE_URL=$(echo "$BLOCK" | jq -r '
+                    .image.src // 
+                    .image.small.src // 
                     .src // 
-                    .image.display.url // 
-                    .image.large.url // 
                     .attachment.url // 
                     .embed.thumbnail_url // 
                     empty
@@ -60,6 +58,7 @@ jobs:
                   
                   ARENA_BLOCK_URL="https://www.are.na/block/$BLOCK_ID"
 
+                  # 4. Construcción del payload de Slack
                   if [ -n "$IMAGE_URL" ] && [ "$IMAGE_URL" != "null" ]; then
                     PAYLOAD=$(jq -n \
                       --arg title "$TITLE" \
@@ -75,7 +74,8 @@ jobs:
                       '{blocks: [{type: "section", text: {type: "mrkdwn", text: ("*Nuevo en [" + $ch + "]:* <" + $url + "|" + $title + ">")}}]}')
                   fi
 
-                  curl -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK"
+                  # 5. Enviar a Slack
+                  curl -s -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK"
                   
                   echo "$BLOCK_ID" >> processed_ids.txt
                   sleep 1
